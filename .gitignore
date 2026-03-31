@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 node/node_modules/
+results/smoke_*.txt
 
 .claude/handoff.md
 plan.md
