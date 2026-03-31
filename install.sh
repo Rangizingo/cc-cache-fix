@@ -8,6 +8,19 @@ VERSION="2.1.81"
 echo "=== Claude Code Cache Fix installer ==="
 echo "Base: $BASE"
 
+if ! command -v node >/dev/null 2>&1; then
+    echo "[!] node not found. Install Node.js first."
+    exit 1
+fi
+if ! command -v npm >/dev/null 2>&1; then
+    echo "[!] npm not found. Install Node.js/npm first."
+    exit 1
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "[!] python3 not found. Install Python 3 first."
+    exit 1
+fi
+
 # 1. npm install if needed
 if [ ! -f "$CLI_JS" ]; then
     echo "[*] Installing @anthropic-ai/claude-code@$VERSION..."
@@ -44,11 +57,15 @@ fi
 
 # 6. Create wrapper
 mkdir -p "$HOME/.local/bin"
-cat > "$HOME/.local/bin/claude-patched" << WRAPPER
+WRAPPER="$HOME/.local/bin/claude-patched"
+if [ -L "$WRAPPER" ] || [ -f "$WRAPPER" ]; then
+    rm -f "$WRAPPER"
+fi
+cat > "$WRAPPER" << WRAPPER_EOF
 #!/usr/bin/env bash
 exec node "$CLI_JS" "\$@"
-WRAPPER
-chmod +x "$HOME/.local/bin/claude-patched"
+WRAPPER_EOF
+chmod +x "$WRAPPER"
 echo "[*] Wrote ~/.local/bin/claude-patched"
 
 echo ""

@@ -37,6 +37,14 @@ if ! command -v npm &>/dev/null; then
     exit 1
 fi
 
+# Check for python3
+if ! command -v python3 &>/dev/null; then
+    echo "[!] python3 not found. Install Python 3 first."
+    echo "    Press any key to exit."
+    read -n1
+    exit 1
+fi
+
 # Create project dir
 mkdir -p "$BASE"
 cd "$BASE"
@@ -123,11 +131,15 @@ fi
 
 # Create wrapper
 mkdir -p "$HOME/.local/bin"
-cat > "$HOME/.local/bin/claude-patched" << WRAPPER
+WRAPPER="$HOME/.local/bin/claude-patched"
+if [ -L "$WRAPPER" ] || [ -f "$WRAPPER" ]; then
+    rm -f "$WRAPPER"
+fi
+cat > "$WRAPPER" << WRAPPER_EOF
 #!/usr/bin/env bash
 exec node "$BASE/node_modules/@anthropic-ai/claude-code/cli.js" "\$@"
-WRAPPER
-chmod +x "$HOME/.local/bin/claude-patched"
+WRAPPER_EOF
+chmod +x "$WRAPPER"
 echo "[*] Created ~/.local/bin/claude-patched"
 
 # Ensure PATH includes ~/.local/bin

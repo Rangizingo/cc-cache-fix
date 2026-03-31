@@ -6,25 +6,40 @@ Patch + test toolkit for the known Claude Code cache issues:
 
 This repo keeps stock `claude` untouched and gives you a separate `claude-patched` command.
 
-## Quick Start (Linux + macOS)
+## Quick Start
 
-From repo root:
+Linux:
 
 ```bash
 ./install.sh
 ```
 
-Then open a new terminal and verify:
+macOS:
+
+```bash
+./install-mac.sh
+```
+
+Windows (PowerShell):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
+```
+
+Then open a new terminal and verify.
+
+Linux/macOS:
 
 ```bash
 type -a claude-patched
 python3 test_cache.py claude-patched --timeout 240 --debug-transcript
 ```
 
-If you specifically want the interactive mac installer:
+Windows (PowerShell):
 
-```bash
-./install-mac.sh
+```powershell
+Get-Command claude-patched -All
+python .\test_cache.py claude-patched --timeout 240 --debug-transcript
 ```
 
 ## Smoke Check (installer + test + summary)
