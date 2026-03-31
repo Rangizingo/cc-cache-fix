@@ -1,0 +1,52 @@
+════════════════════════════════════════════════════════════
+  Claude Code Cache & Replacement Test
+  Command: claude
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+  BUG 1: Sentinel replacement (cch=00000)
+────────────────────────────────────────────────────────────
+[*] Testing sentinel replacement...
+  Sent:     sentinel=cch=00000=end
+  Received: sentinel=cch=e9498=end
+  Replaced: 00000 → e9498
+
+────────────────────────────────────────────────────────────
+  BUG 2: Resume cache regression
+────────────────────────────────────────────────────────────
+[*] Fresh session...
+  cache_read=36,666  cache_creation=5,966
+  result: `ABC`
+[*] Resume...
+  cache_read=15,401  cache_creation=5,988
+  result: 
+
+`ABC`
+[*] Consecutive resume...
+  cache_read=15,401  cache_creation=6,010
+  result: 
+
+3
+
+════════════════════════════════════════════════════════════
+  RESULTS
+════════════════════════════════════════════════════════════
+  ✗ SENTINEL REPLACEMENT: ACTIVE
+    The standalone binary rewrites cch=00000 in every API request.
+    If conversation mentions this sentinel, cache prefix breaks.
+    Mitigation: use 'npx @anthropic-ai/claude-code' instead
+    Issue: https://github.com/anthropics/claude-code/issues/40524
+
+  ✗ RESUME CACHE: BROKEN
+    Resume cache_read=15,401 (system prompt only)
+    cache_creation=5,988 (full conversation rebuilt)
+    Each resume pays ~$0.0018 extra
+    Issue: https://github.com/anthropics/claude-code/issues/34629
+
+  ⚠ CONSECUTIVE RESUME: NOT GROWING
+
+────────────────────────────────────────────────────────────
+  ✗ 2 bugs detected — see details above
+────────────────────────────────────────────────────────────
+
+  Cleaned up 1 test session dir(s)

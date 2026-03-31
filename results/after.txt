@@ -1,0 +1,40 @@
+════════════════════════════════════════════════════════════
+  Claude Code Cache & Replacement Test
+  Command: claude-patched
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+  BUG 1: Sentinel replacement (cch=00000)
+────────────────────────────────────────────────────────────
+[*] Testing sentinel replacement...
+  Sent:     sentinel=cch=00000=end
+  Received: sentinel=cch=00000=end
+
+────────────────────────────────────────────────────────────
+  BUG 2: Resume cache regression
+────────────────────────────────────────────────────────────
+[*] Fresh session...
+  cache_read=21,264  cache_creation=21,365
+  result: `ABC`
+[*] Resume...
+  cache_read=0  cache_creation=21,389
+  result: `ABC`
+[*] Consecutive resume...
+  cache_read=15,400  cache_creation=6,009
+  result: 3
+
+════════════════════════════════════════════════════════════
+  RESULTS
+════════════════════════════════════════════════════════════
+  ✓ SENTINEL REPLACEMENT: NOT ACTIVE
+
+  ✓ RESUME CACHE: WORKING
+    Resume cache_read=0 (includes conversation history)
+
+  ✓ CONSECUTIVE RESUME: WORKING (cache grows between resumes)
+
+────────────────────────────────────────────────────────────
+  ★ No known cache bugs detected
+────────────────────────────────────────────────────────────
+
+  Cleaned up 1 test session dir(s)
