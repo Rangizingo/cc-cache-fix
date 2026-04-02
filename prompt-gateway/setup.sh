@@ -4,12 +4,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  prompt-gateway setup"
+GATEWAY_BIN="$SCRIPT_DIR/dist/prompt-gateway.mjs"
+AGENT_BIN="$SCRIPT_DIR/dist/agent.mjs"
+
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  prompt-gateway setup"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo
 
-# Check node
+# ── Check node ──────────────────────────────────────
 if ! command -v node &>/dev/null; then
   echo "✗ Node.js not found. Install Node 20+ first."
   exit 1
@@ -22,51 +25,204 @@ if [ "$NODE_VERSION" -lt 20 ]; then
 fi
 echo "✓ Node $(node -v)"
 
-# Install deps
+# ── Install deps ────────────────────────────────────
 echo "  Installing dependencies..."
 npm install --silent 2>/dev/null
 echo "✓ Dependencies installed"
 
-# Build
+# ── Build ───────────────────────────────────────────
 echo "  Building bundles..."
 node esbuild.config.mjs
 echo "✓ Built"
 
-# Create symlinks in a bin dir
+# ── CLI shims ───────────────────────────────────────
 mkdir -p "$SCRIPT_DIR/bin"
 
-cat > "$SCRIPT_DIR/bin/agent" << 'SHIM'
+cat > "$SCRIPT_DIR/bin/agent" << SHIM
 #!/usr/bin/env bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec node "$SCRIPT_DIR/dist/agent.mjs" "$@"
+exec node "$AGENT_BIN" "\$@"
 SHIM
 chmod +x "$SCRIPT_DIR/bin/agent"
 
-cat > "$SCRIPT_DIR/bin/prompt-gateway" << 'SHIM'
+cat > "$SCRIPT_DIR/bin/prompt-gateway" << SHIM
 #!/usr/bin/env bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec node "$SCRIPT_DIR/dist/prompt-gateway.mjs" "$@"
+exec node "$GATEWAY_BIN" "\$@"
 SHIM
 chmod +x "$SCRIPT_DIR/bin/prompt-gateway"
 
-echo "✓ CLI shims created in bin/"
-echo
+echo "✓ CLI shims created"
 
-# Shell integration hint
+# ── Auto-configure MCP clients ─────────────────────
+
+NODE_BIN="$(which node)"
+MCP_ENTRY='{"command":"'"$NODE_BIN"'","args":["'"$GATEWAY_BIN"'","--mcp"]}'
+
+# Helper: merge prompt-gateway into an MCP config JSON file.
+# Creates the file if it doesn't exist. Preserves existing servers.
+configure_mcp_file() {
+  local file="$1"
+  local label="$2"
+  local wrapper_key="${3:-}"  # optional top-level key (e.g. "mcpServers" vs nested)
+
+  mkdir -p "$(dirname "$file")"
+
+  if [ ! -f "$file" ]; then
+    # Create fresh
+    if [ -n "$wrapper_key" ]; then
+      echo "{\"$wrapper_key\":{\"prompt-gateway\":$MCP_ENTRY}}" | node -e "
+        process.stdin.setEncoding('utf8');
+        let d=''; process.stdin.on('data',c=>d+=c);
+        process.stdin.on('end',()=>process.stdout.write(JSON.stringify(JSON.parse(d),null,2)+'\n'));
+      " > "$file"
+    else
+      echo "{\"prompt-gateway\":$MCP_ENTRY}" | node -e "
+        process.stdin.setEncoding('utf8');
+        let d=''; process.stdin.on('data',c=>d+=c);
+        process.stdin.on('end',()=>process.stdout.write(JSON.stringify(JSON.parse(d),null,2)+'\n'));
+      " > "$file"
+    fi
+    echo "✓ $label — created $file"
+    return
+  fi
+
+  # File exists — merge without clobbering
+  local tmp="${file}.tmp.$$"
+  node -e "
+    const fs = require('fs');
+    const cfg = JSON.parse(fs.readFileSync('$file','utf8'));
+    const entry = $MCP_ENTRY;
+    const key = '$wrapper_key';
+    if (key) {
+      if (!cfg[key]) cfg[key] = {};
+      if (cfg[key]['prompt-gateway']) { process.stdout.write('skip'); process.exit(0); }
+      cfg[key]['prompt-gateway'] = entry;
+    } else {
+      if (cfg['prompt-gateway']) { process.stdout.write('skip'); process.exit(0); }
+      cfg['prompt-gateway'] = entry;
+    }
+    fs.writeFileSync('$tmp', JSON.stringify(cfg, null, 2) + '\n');
+    process.stdout.write('ok');
+  " 2>/dev/null || true
+
+  if [ -f "$tmp" ]; then
+    mv "$tmp" "$file"
+    echo "✓ $label — updated $file"
+  else
+    echo "✓ $label — already configured"
+  fi
+}
+
+echo
+echo "  Configuring MCP clients..."
+
+CONFIGURED=0
+
+# ── Cursor ──────────────────────────────────────────
+# Global: ~/.cursor/mcp.json
+CURSOR_GLOBAL="$HOME/.cursor/mcp.json"
+configure_mcp_file "$CURSOR_GLOBAL" "Cursor (global)" "mcpServers"
+CONFIGURED=$((CONFIGURED + 1))
+
+# ── Claude Desktop ──────────────────────────────────
+if [ "$(uname)" = "Darwin" ]; then
+  CLAUDE_DESKTOP="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+else
+  # Linux (XDG)
+  CLAUDE_DESKTOP="${XDG_CONFIG_HOME:-$HOME/.config}/Claude/claude_desktop_config.json"
+fi
+configure_mcp_file "$CLAUDE_DESKTOP" "Claude Desktop" "mcpServers"
+CONFIGURED=$((CONFIGURED + 1))
+
+# ── Claude Code ─────────────────────────────────────
+CLAUDE_CODE="$HOME/.claude/settings.json"
+if [ -f "$CLAUDE_CODE" ]; then
+  # Claude Code uses a different structure — mcpServers is a top-level array-style key
+  node -e "
+    const fs = require('fs');
+    const cfg = JSON.parse(fs.readFileSync('$CLAUDE_CODE','utf8'));
+    if (!cfg.mcpServers) cfg.mcpServers = {};
+    if (cfg.mcpServers['prompt-gateway']) { process.stdout.write('skip'); process.exit(0); }
+    cfg.mcpServers['prompt-gateway'] = $MCP_ENTRY;
+    fs.writeFileSync('$CLAUDE_CODE', JSON.stringify(cfg, null, 2) + '\n');
+    process.stdout.write('ok');
+  " 2>/dev/null && echo "✓ Claude Code — updated $CLAUDE_CODE" || echo "✓ Claude Code — already configured"
+  CONFIGURED=$((CONFIGURED + 1))
+else
+  configure_mcp_file "$CLAUDE_CODE" "Claude Code" "mcpServers"
+  CONFIGURED=$((CONFIGURED + 1))
+fi
+
+# ── VS Code (Copilot MCP) ──────────────────────────
+VSCODE_SETTINGS="$HOME/.vscode/settings.json"
+if [ -d "$HOME/.vscode" ] || command -v code &>/dev/null; then
+  if [ ! -f "$VSCODE_SETTINGS" ]; then
+    mkdir -p "$HOME/.vscode"
+    echo '{}' > "$VSCODE_SETTINGS"
+  fi
+  node -e "
+    const fs = require('fs');
+    const cfg = JSON.parse(fs.readFileSync('$VSCODE_SETTINGS','utf8'));
+    const key = 'mcp.servers';
+    if (!cfg[key]) cfg[key] = {};
+    if (cfg[key]['prompt-gateway']) { process.stdout.write('skip'); process.exit(0); }
+    cfg[key]['prompt-gateway'] = { command: '$NODE_BIN', args: ['$GATEWAY_BIN', '--mcp'] };
+    fs.writeFileSync('$VSCODE_SETTINGS', JSON.stringify(cfg, null, 2) + '\n');
+    process.stdout.write('ok');
+  " 2>/dev/null && echo "✓ VS Code — updated $VSCODE_SETTINGS" || echo "✓ VS Code — already configured"
+  CONFIGURED=$((CONFIGURED + 1))
+fi
+
+# ── PATH setup ──────────────────────────────────────
+echo
 AGENT_PATH="$SCRIPT_DIR/bin"
+SHELL_RC=""
+PATH_ALREADY=0
+
+if echo "$PATH" | tr ':' '\n' | grep -qx "$AGENT_PATH"; then
+  PATH_ALREADY=1
+fi
+
+if [ "$PATH_ALREADY" -eq 0 ]; then
+  # Detect shell config file
+  if [ -n "${ZSH_VERSION:-}" ] || [ "$(basename "${SHELL:-}")" = "zsh" ]; then
+    SHELL_RC="$HOME/.zshrc"
+  elif [ -f "$HOME/.bashrc" ]; then
+    SHELL_RC="$HOME/.bashrc"
+  elif [ -f "$HOME/.bash_profile" ]; then
+    SHELL_RC="$HOME/.bash_profile"
+  elif [ -f "$HOME/.profile" ]; then
+    SHELL_RC="$HOME/.profile"
+  fi
+
+  if [ -n "$SHELL_RC" ]; then
+    MARKER="# prompt-gateway PATH"
+    if ! grep -q "$MARKER" "$SHELL_RC" 2>/dev/null; then
+      echo "" >> "$SHELL_RC"
+      echo "$MARKER" >> "$SHELL_RC"
+      echo "export PATH=\"$AGENT_PATH:\$PATH\"" >> "$SHELL_RC"
+      echo "✓ Added to PATH in $SHELL_RC"
+    else
+      echo "✓ PATH already in $SHELL_RC"
+    fi
+  fi
+fi
+
+# ── Done ────────────────────────────────────────────
+echo
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  Done! Add to your PATH:"
+echo "  All done! $CONFIGURED MCP clients configured."
 echo
-echo "    export PATH=\"$AGENT_PATH:\$PATH\""
-echo
-echo "  Then use:"
+echo "  Usage:"
 echo
 echo "    agent \"fix the auth race and keep changes minimal\""
 echo "    agent --json \"add a health endpoint\""
-echo "    prompt-gateway --http           # start HTTP daemon"
-echo "    prompt-gateway --mcp            # start MCP server"
+echo "    prompt-gateway --http"
 echo
-echo "  MCP integration (Cursor / Claude Desktop):"
-echo
-echo "    prompt-gateway --mcp-config     # print config snippet"
+if [ "$PATH_ALREADY" -eq 0 ] && [ -n "$SHELL_RC" ]; then
+  echo "  Restart your shell or run:"
+  echo "    source $SHELL_RC"
+  echo
+fi
+echo "  Your MCP clients (Cursor, Claude, VS Code) will"
+echo "  see prompt-gateway tools on next restart."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
