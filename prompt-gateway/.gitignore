@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.prompt-gateway/
+*.db
+*.db-wal
+*.db-shm
