@@ -1,0 +1,8 @@
+node_modules/
+dist/
+bin/agent
+bin/prompt-gateway
+.prompt-gateway/
+*.db
+*.db-wal
+*.db-shm
