@@ -87,22 +87,23 @@ configure_mcp_file() {
 
   # File exists — merge without clobbering
   local tmp="${file}.tmp.$$"
-  node -e "
+  local merge_result
+  merge_result=$(node -e "
     const fs = require('fs');
     const cfg = JSON.parse(fs.readFileSync('$file','utf8'));
     const entry = $MCP_ENTRY;
     const key = '$wrapper_key';
     if (key) {
       if (!cfg[key]) cfg[key] = {};
-      if (cfg[key]['prompt-gateway']) { process.stdout.write('skip'); process.exit(0); }
+      if (cfg[key]['prompt-gateway']) { process.exit(0); }
       cfg[key]['prompt-gateway'] = entry;
     } else {
-      if (cfg['prompt-gateway']) { process.stdout.write('skip'); process.exit(0); }
+      if (cfg['prompt-gateway']) { process.exit(0); }
       cfg['prompt-gateway'] = entry;
     }
     fs.writeFileSync('$tmp', JSON.stringify(cfg, null, 2) + '\n');
-    process.stdout.write('ok');
-  " 2>/dev/null || true
+    process.stdout.write('wrote');
+  " 2>/dev/null) || true
 
   if [ -f "$tmp" ]; then
     mv "$tmp" "$file"
@@ -136,16 +137,20 @@ CONFIGURED=$((CONFIGURED + 1))
 # ── Claude Code ─────────────────────────────────────
 CLAUDE_CODE="$HOME/.claude/settings.json"
 if [ -f "$CLAUDE_CODE" ]; then
-  # Claude Code uses a different structure — mcpServers is a top-level array-style key
-  node -e "
+  RESULT=$(node -e "
     const fs = require('fs');
     const cfg = JSON.parse(fs.readFileSync('$CLAUDE_CODE','utf8'));
     if (!cfg.mcpServers) cfg.mcpServers = {};
-    if (cfg.mcpServers['prompt-gateway']) { process.stdout.write('skip'); process.exit(0); }
+    if (cfg.mcpServers['prompt-gateway']) { process.exit(0); }
     cfg.mcpServers['prompt-gateway'] = $MCP_ENTRY;
     fs.writeFileSync('$CLAUDE_CODE', JSON.stringify(cfg, null, 2) + '\n');
-    process.stdout.write('ok');
-  " 2>/dev/null && echo "✓ Claude Code — updated $CLAUDE_CODE" || echo "✓ Claude Code — already configured"
+    process.stdout.write('wrote');
+  " 2>/dev/null)
+  if [ "$RESULT" = "wrote" ]; then
+    echo "✓ Claude Code — updated $CLAUDE_CODE"
+  else
+    echo "✓ Claude Code — already configured"
+  fi
   CONFIGURED=$((CONFIGURED + 1))
 else
   configure_mcp_file "$CLAUDE_CODE" "Claude Code" "mcpServers"
@@ -159,17 +164,47 @@ if [ -d "$HOME/.vscode" ] || command -v code &>/dev/null; then
     mkdir -p "$HOME/.vscode"
     echo '{}' > "$VSCODE_SETTINGS"
   fi
-  node -e "
+  VS_RESULT=$(node -e "
     const fs = require('fs');
     const cfg = JSON.parse(fs.readFileSync('$VSCODE_SETTINGS','utf8'));
     const key = 'mcp.servers';
     if (!cfg[key]) cfg[key] = {};
-    if (cfg[key]['prompt-gateway']) { process.stdout.write('skip'); process.exit(0); }
+    if (cfg[key]['prompt-gateway']) { process.exit(0); }
     cfg[key]['prompt-gateway'] = { command: '$NODE_BIN', args: ['$GATEWAY_BIN', '--mcp'] };
     fs.writeFileSync('$VSCODE_SETTINGS', JSON.stringify(cfg, null, 2) + '\n');
-    process.stdout.write('ok');
-  " 2>/dev/null && echo "✓ VS Code — updated $VSCODE_SETTINGS" || echo "✓ VS Code — already configured"
+    process.stdout.write('wrote');
+  " 2>/dev/null)
+  if [ "$VS_RESULT" = "wrote" ]; then
+    echo "✓ VS Code — updated $VSCODE_SETTINGS"
+  else
+    echo "✓ VS Code — already configured"
+  fi
   CONFIGURED=$((CONFIGURED + 1))
+fi
+
+# ── Windsurf ────────────────────────────────────────
+if [ -d "$HOME/.windsurf" ]; then
+  WINDSURF_CONFIG="$HOME/.windsurf/mcp.json"
+  configure_mcp_file "$WINDSURF_CONFIG" "Windsurf" "mcpServers"
+  CONFIGURED=$((CONFIGURED + 1))
+fi
+
+# ── JetBrains IDEs ─────────────────────────────────
+JB_CONFIG_BASE=""
+if [ "$(uname)" = "Darwin" ]; then
+  JB_CONFIG_BASE="$HOME/Library/Application Support/JetBrains"
+else
+  JB_CONFIG_BASE="${XDG_CONFIG_HOME:-$HOME/.config}/JetBrains"
+fi
+if [ -d "$JB_CONFIG_BASE" ]; then
+  # Find the most recent IDE config
+  JB_LATEST=$(ls -dt "$JB_CONFIG_BASE"/*/ 2>/dev/null | head -1)
+  if [ -n "$JB_LATEST" ]; then
+    JB_MCP_FILE="$JB_LATEST/options/mcp.json"
+    JB_NAME=$(basename "$JB_LATEST")
+    configure_mcp_file "$JB_MCP_FILE" "JetBrains ($JB_NAME)" "mcpServers"
+    CONFIGURED=$((CONFIGURED + 1))
+  fi
 fi
 
 # ── PATH setup ──────────────────────────────────────
@@ -205,6 +240,15 @@ if [ "$PATH_ALREADY" -eq 0 ]; then
       echo "✓ PATH already in $SHELL_RC"
     fi
   fi
+fi
+
+# ── Quick test ──────────────────────────────────────
+echo "  Running quick test..."
+TEST_OUTPUT=$(node "$SCRIPT_DIR/dist/agent.mjs" --json "test" 2>/dev/null)
+if echo "$TEST_OUTPUT" | node -e "const d=require('fs').readFileSync(0,'utf8');const j=JSON.parse(d);process.exit(j.contract?.request_id?0:1)" 2>/dev/null; then
+  echo "✓ Gateway works"
+else
+  echo "⚠ Quick test returned unexpected output"
 fi
 
 # ── Done ────────────────────────────────────────────
