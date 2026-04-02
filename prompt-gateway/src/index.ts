@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createMcpServer } from "./mcp/server.js";
 import { createHttpServer } from "./server/http.js";
@@ -14,10 +15,41 @@ import { Storage } from "./storage/db.js";
 //   npx prompt-gateway          # starts both servers
 //   npx prompt-gateway --http   # HTTP only
 //   npx prompt-gateway --mcp    # MCP stdio only
+//   npx prompt-gateway --mcp-config  # print MCP client config
 // ---------------------------------------------------------------------------
+
+function printMcpConfig(): void {
+  const gatewayPath = path.resolve(
+    path.dirname(new URL(import.meta.url).pathname),
+    "..",
+    "dist",
+    "prompt-gateway.mjs"
+  );
+
+  const config = {
+    mcpServers: {
+      "prompt-gateway": {
+        command: "node",
+        args: [gatewayPath, "--mcp"],
+      },
+    },
+  };
+
+  console.log("Add this to your MCP client config:\n");
+  console.log("  Cursor:          .cursor/mcp.json");
+  console.log("  Claude Desktop:  claude_desktop_config.json");
+  console.log("  Claude Code:     .claude/settings.json (mcpServers key)\n");
+  console.log(JSON.stringify(config, null, 2));
+}
 
 async function main() {
   const args = process.argv.slice(2);
+
+  if (args.includes("--mcp-config")) {
+    printMcpConfig();
+    return;
+  }
+
   const httpOnly = args.includes("--http");
   const mcpOnly = args.includes("--mcp");
   const port = parseInt(args.find((a) => a.startsWith("--port="))?.split("=")[1] ?? "4840");
